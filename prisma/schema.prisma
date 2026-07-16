@@ -1,0 +1,201 @@
+// SEO AI Writer — Prisma Schema
+// Production target: Neon PostgreSQL
+// Sandbox: SQLite (fallback)
+//
+// To switch to Neon PostgreSQL:
+//   1. Change provider below to "postgresql"
+//   2. Set DATABASE_URL="postgresql://user:pass@ep-xxx.neon.tech/dbname?sslmode=require"
+//   3. Run: bun run db:push
+//
+// Better Auth manages: User, Account, Session, Verification
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  // Switch to "postgresql" for Neon in production
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Better Auth Core Models ────────────────────────────────
+// These are managed by Better Auth (do not write to them directly).
+
+model User {
+  id            String    @id
+  email         String    @unique
+  emailVerified Boolean   @default(false)
+  name          String
+  image         String?
+  phone         String? // Benin: +229 XXXXXXXX
+  plan          String    @default("free") // free | pro | enterprise
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts      Account[]
+  sessions      Session[]
+  conversations Conversation[]
+  contents      SEOContent[]
+  favorites     Favorite[]
+  settings      Settings?
+  notifications Notification[]
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+}
+
+// ─── App Data Models ────────────────────────────────────────
+
+model Conversation {
+  id        String   @id @default(cuid())
+  title     String   @default("Nouvelle conversation")
+  userId    String
+  pinned    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages Message[]
+
+  @@index([userId])
+}
+
+model Message {
+  id             String   @id @default(cuid())
+  conversationId String
+  role           String   // user | assistant
+  content        String
+  createdAt      DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+}
+
+model SEOContent {
+  id         String   @id @default(cuid())
+  userId     String
+  title      String
+  type       String   // article | landing | product | meta-title | meta-desc | slug | faq | social | email | ad
+  subtype    String?  // facebook | instagram | linkedin | twitter | youtube
+  content    String
+  keyword    String?
+  language   String   @default("fr")
+  wordCount  Int      @default(0)
+  seoScore   Int      @default(0)
+  isFavorite Boolean  @default(false)
+  folderId   String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  favorites Favorite[]
+
+  @@index([userId])
+  @@index([type])
+}
+
+model PromptTemplate {
+  id        String   @id @default(cuid())
+  name      String
+  category  String   // seo | social | email | ad | rewrite
+  prompt    String
+  icon      String?
+  isPremium Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model Favorite {
+  id        String   @id @default(cuid())
+  userId    String
+  contentId String?
+  createdAt DateTime @default(now())
+
+  user    User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  content SEOContent? @relation(fields: [contentId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, contentId])
+}
+
+model Settings {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  theme         String   @default("system") // light | dark | system
+  language      String   @default("fr")
+  defaultTone   String   @default("professional")
+  notifications Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  message   String
+  type      String   @default("info") // info | success | warning | error
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Newsletter {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  createdAt DateTime @default(now())
+}
+
+model Contact {
+  id        String   @id @default(cuid())
+  name      String
+  email     String
+  message   String
+  createdAt DateTime @default(now())
+}
