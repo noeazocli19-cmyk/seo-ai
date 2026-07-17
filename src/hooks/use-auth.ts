@@ -57,7 +57,10 @@ export function useAuth(): UseAuthReturn {
 
   const handleSignIn = useCallback(async (email: string, password: string) => {
     const { data, error } = await authClient.signIn.email({ email, password })
-    if (error) return { error: translateError(error.message) }
+    if (error) {
+      console.error('[AUTH SIGNIN ERROR]', error)
+      return { error: translateError(error.message, error) }
+    }
     if (data?.user) {
       const u = data.user as AuthUser
       setUser(u)
@@ -72,7 +75,10 @@ export function useAuth(): UseAuthReturn {
       email: data.email,
       password: data.password,
     })
-    if (error) return { error: translateError(error.message) }
+    if (error) {
+      console.error('[AUTH SIGNUP ERROR]', error)
+      return { error: translateError(error.message, error) }
+    }
     if (result?.user) {
       const u = result.user as AuthUser
       setUser(u)
