@@ -17,7 +17,7 @@ export interface ChatMessage {
   content: string
 }
 
-const GEMINI_MODEL_NAME = 'gemini-2.5-pro'
+const GEMINI_MODEL_NAME = 'gemini-2.5-flash'
 
 let geminiClient: GoogleGenerativeAI | null = null
 
