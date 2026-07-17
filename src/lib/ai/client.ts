@@ -1,16 +1,13 @@
 /**
  * AI Client Abstraction Layer
- * Supports OpenAI and Google Gemini with a local dev mock fallback.
+ * Uses Google Gemini with a local dev mock fallback.
  *
  * CONFIGURATION :
- *   OPENAI_API_KEY=sk-...  (OpenAI API key)
  *   GEMINI_API_KEY=AIza...  (Google Gemini API key)
- *   DEV_USE_MOCK_AI=true   (use mock responses during development)
+ *   DEV_USE_MOCK_AI=true    (use mock responses during development)
  *
- * For OpenAI, create a key on: https://platform.openai.com/account/api-keys
  * For Google Gemini, create a key on: https://aistudio.google.com/apikey
  */
-import OpenAI from 'openai'
 import { GoogleGenerativeAI } from '@google/generative-ai'
 
 export type ChatRole = 'user' | 'assistant'
@@ -21,15 +18,8 @@ export interface ChatMessage {
 }
 
 const GEMINI_MODEL_NAME = 'gemini-2.5-pro'
-const OPENAI_MODEL_NAME = 'gpt-3.5-turbo'
 
 let geminiClient: GoogleGenerativeAI | null = null
-let openAIClient: OpenAI | null = null
-
-type OpenAIChatMessage = {
-  role: 'system' | 'user' | 'assistant'
-  content: string
-}
 
 function getGeminiClient(): GoogleGenerativeAI {
   const key = process.env.GEMINI_API_KEY
@@ -46,32 +36,10 @@ function getGeminiClient(): GoogleGenerativeAI {
   return geminiClient
 }
 
-function getOpenAIClient(): OpenAI {
-  const key = process.env.OPENAI_API_KEY
-  if (!key) {
-    throw new Error(
-      '❌ OPENAI_API_KEY manquant dans .env\n\n' +
-      'Obtiens ta clé sur : https://platform.openai.com/account/api-keys\n' +
-      'Puis ajoute dans .env : OPENAI_API_KEY=sk-...'
-    )
-  }
-  if (!openAIClient) {
-    openAIClient = new OpenAI({ apiKey: key })
-  }
-  return openAIClient
-}
-
 function toGeminiContents(messages: ChatMessage[]) {
   return messages.map((m) => ({
     role: m.role === 'assistant' ? 'model' : 'user',
     parts: [{ text: m.content }],
-  }))
-}
-
-function toOpenAIMessages(messages: ChatMessage[]) {
-  return messages.map((m) => ({
-    role: m.role as 'user' | 'assistant',
-    content: m.content,
   }))
 }
 
@@ -95,54 +63,31 @@ export async function generateCompletion(
     return true
   })
 
-  let result
-  const openAIKey = process.env.OPENAI_API_KEY
-  const geminiKey = process.env.GEMINI_API_KEY
-
   try {
-    if (openAIKey) {
-      const client = getOpenAIClient()
-      const messages: OpenAIChatMessage[] = [
-        ...(options?.system ? [{ role: 'system' as const, content: options.system }] : []),
-        ...toOpenAIMessages(userMessages),
-      ]
+    const geminiKey = process.env.GEMINI_API_KEY
+    if (!geminiKey) {
+      throw new Error(
+        '❌ Aucune clé AI configurée. Ajoute GEMINI_API_KEY dans .env'
+      )
+    }
 
-      const response = await client.chat.completions.create({
-        model: OPENAI_MODEL_NAME,
-        messages,
+    const client = getGeminiClient()
+    const model = client.getGenerativeModel({
+      model: GEMINI_MODEL_NAME,
+      systemInstruction: options?.system,
+      generationConfig: {
         temperature: options?.temperature ?? 0.7,
-      })
+      },
+    })
 
-      const content = response.choices?.[0]?.message?.content ?? ''
-      if (!content || content.trim().length === 0) {
-        throw new Error('❌ Le modèle OpenAI a retourné une réponse vide.')
-      }
-      return content
+    const result = await model.generateContent({
+      contents: toGeminiContents(userMessages),
+    })
+    const content = result.response.text()
+    if (!content || content.trim().length === 0) {
+      throw new Error('❌ Le modèle Gemini a retourné une réponse vide.')
     }
-
-    if (geminiKey) {
-      const client = getGeminiClient()
-      const model = client.getGenerativeModel({
-        model: GEMINI_MODEL_NAME,
-        systemInstruction: options?.system,
-        generationConfig: {
-          temperature: options?.temperature ?? 0.7,
-        },
-      })
-
-      result = await model.generateContent({
-        contents: toGeminiContents(userMessages),
-      })
-      const content = result.response.text()
-      if (!content || content.trim().length === 0) {
-        throw new Error('❌ Le modèle Gemini a retourné une réponse vide.')
-      }
-      return content
-    }
-
-    throw new Error(
-      '❌ Aucune clé AI configurée. Ajoute OPENAI_API_KEY ou GEMINI_API_KEY dans .env'
-    )
+    return content
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
 
@@ -151,10 +96,9 @@ export async function generateCompletion(
       throw new Error(
         '❌ Quota dépassé ou compte non configuré.\n\n' +
         'Solutions :\n' +
-        '  1. Active la facturation sur Google Cloud ou OpenAI.\n' +
-        '  2. Vérifie que ta clé API est valide et non restreinte.\n' +
-        '  3. OU déploie sur Vercel (serveurs US/EU) si tu utilises Gemini.\n\n' +
-        'Free tier : 15 req/min, 1500 req/jour — largement suffisant.'
+        '  1. Active la facturation sur Google Cloud si besoin.\n' +
+        '  2. Vérifie que ta clé API est valide et non restreinte.\n\n' +
+        'Free tier : largement suffisant pour du développement/test.'
       )
     }
 
@@ -172,7 +116,7 @@ export async function generateCompletion(
     if (msg.includes('API_KEY_INVALID') || msg.includes('403')) {
       throw new Error(
         '❌ Clé API invalide.\n\n' +
-        'Vérifie ta clé OpenAI dans OPENAI_API_KEY ou ta clé Gemini dans GEMINI_API_KEY.'
+        'Vérifie ta clé Gemini dans GEMINI_API_KEY.'
       )
     }
 
@@ -217,7 +161,6 @@ export async function generateJSON<T = unknown>(
  * Retourne le nom du modèle actif (pour debug).
  */
 export function getCurrentModel(): string {
-  if (process.env.OPENAI_API_KEY) return OPENAI_MODEL_NAME
   if (process.env.GEMINI_API_KEY) return GEMINI_MODEL_NAME
   return 'none'
 }
