@@ -16,8 +16,7 @@ export interface ChatMessage {
   role: ChatRole
   content: string
 }
-
-const GEMINI_MODEL_NAME = 'gemini-flash-latest'
+const GEMINI_MODEL_NAME = 'gemini-2.5-flash-lite'
 
 let geminiClient: GoogleGenerativeAI | null = null
 
