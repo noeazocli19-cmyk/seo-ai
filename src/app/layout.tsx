@@ -35,7 +35,7 @@ export const metadata: Metadata = {
   authors: [{ name: "SEO AI Writer" }],
   creator: "SEO AI Writer",
   icons: {
-    icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
+    icon: "https://z-cdn.chatglm.cn/z-ai/static/img.jpeg",
   },
   openGraph: {
     title: "SEO AI Writer — Assistant IA pour contenu optimisé Google",

@@ -34,7 +34,7 @@ seo-ai-writer/
 │   └── schema.neon.prisma         # Variante PostgreSQL pour Neon (production)
 │
 ├── public/                        # Assets statiques servis tels quels
-│   ├── logo.svg                   # Logo SEO AI Writer
+│   ├── img.jpeg                   # Logo SEO AI Writer
 │   └── robots.txt                 # Directives pour les crawlers SEO
 │
 └── src/                           # Code source de l'application
