@@ -1,14 +1,14 @@
 /**
  * AI Client Abstraction Layer
- * Uses Google Gemini with a local dev mock fallback.
+ * Uses Groq (fast, generous free tier) with a local dev mock fallback.
  *
  * CONFIGURATION :
- *   GEMINI_API_KEY=AIza...  (Google Gemini API key)
+ *   GROQ_API_KEY=gsk_...    (Groq API key)
  *   DEV_USE_MOCK_AI=true    (use mock responses during development)
  *
- * For Google Gemini, create a key on: https://aistudio.google.com/apikey
+ * Create a key on: https://console.groq.com/keys
  */
-import { GoogleGenerativeAI } from '@google/generative-ai'
+import Groq from 'groq-sdk'
 
 export type ChatRole = 'user' | 'assistant'
 
@@ -16,34 +16,49 @@ export interface ChatMessage {
   role: ChatRole
   content: string
 }
-const GEMINI_MODEL_NAME = 'gemini-2.5-flash-lite'
 
-let geminiClient: GoogleGenerativeAI | null = null
+// Llama 3.3 70B: bon compromis qualité/vitesse, tier gratuit généreux
+const GROQ_MODEL_NAME = 'llama-3.3-70b-versatile'
 
-function getGeminiClient(): GoogleGenerativeAI {
-  const key = process.env.GEMINI_API_KEY
+const MAX_RETRIES = 3
+const RETRY_DELAY_MS = 1500
+
+let groqClient: Groq | null = null
+
+function getGroqClient(): Groq {
+  const key = process.env.GROQ_API_KEY
   if (!key) {
     throw new Error(
-      '❌ GEMINI_API_KEY manquant dans .env\n\n' +
-      'Obtiens ta clé gratuite sur : https://aistudio.google.com/apikey\n' +
-      'Puis ajoute dans .env : GEMINI_API_KEY=AIza...'
+      '❌ GROQ_API_KEY manquant dans .env\n\n' +
+      'Obtiens ta clé gratuite sur : https://console.groq.com/keys\n' +
+      'Puis ajoute dans .env : GROQ_API_KEY=gsk_...'
     )
   }
-  if (!geminiClient) {
-    geminiClient = new GoogleGenerativeAI(key)
+  if (!groqClient) {
+    groqClient = new Groq({ apiKey: key })
   }
-  return geminiClient
+  return groqClient
 }
 
-function toGeminiContents(messages: ChatMessage[]) {
+type GroqChatMessage = {
+  role: 'system' | 'user' | 'assistant'
+  content: string
+}
+
+function toGroqMessages(messages: ChatMessage[]) {
   return messages.map((m) => ({
-    role: m.role === 'assistant' ? 'model' : 'user',
-    parts: [{ text: m.content }],
+    role: m.role as 'user' | 'assistant',
+    content: m.content,
   }))
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 /**
  * Generate a chat completion with optional system prompt.
+ * Retries automatically on transient errors (rate limit / server overload).
  */
 export async function generateCompletion(
   messages: ChatMessage[],
@@ -51,7 +66,6 @@ export async function generateCompletion(
 ): Promise<string> {
   const useMock = process.env.DEV_USE_MOCK_AI === 'true'
   if (useMock) {
-    // Simple mock for development: concatenate user messages and return a canned reply
     const joined = messages.map((m) => m.content).join(' ')
     await new Promise((r) => setTimeout(r, 200))
     return `Réponse mock (dev) : ${joined} — contenu factice pour le développement.`
@@ -62,65 +76,66 @@ export async function generateCompletion(
     return true
   })
 
-  try {
-    const geminiKey = process.env.GEMINI_API_KEY
-    if (!geminiKey) {
-      throw new Error(
-        '❌ Aucune clé AI configurée. Ajoute GEMINI_API_KEY dans .env'
-      )
-    }
-
-    const client = getGeminiClient()
-    const model = client.getGenerativeModel({
-      model: GEMINI_MODEL_NAME,
-      systemInstruction: options?.system,
-      generationConfig: {
-        temperature: options?.temperature ?? 0.7,
-      },
-    })
-
-    const result = await model.generateContent({
-      contents: toGeminiContents(userMessages),
-    })
-    const content = result.response.text()
-    if (!content || content.trim().length === 0) {
-      throw new Error('❌ Le modèle Gemini a retourné une réponse vide.')
-    }
-    return content
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error)
-
-    // Erreur de quota
-    if (msg.includes('429') || msg.includes('quota')) {
-      throw new Error(
-        '❌ Quota dépassé ou compte non configuré.\n\n' +
-        'Solutions :\n' +
-        '  1. Active la facturation sur Google Cloud si besoin.\n' +
-        '  2. Vérifie que ta clé API est valide et non restreinte.\n\n' +
-        'Free tier : largement suffisant pour du développement/test.'
-      )
-    }
-
-    // Erreur de localisation Gemini
-    if (msg.includes('location') || msg.includes('FAILED_PRECONDITION')) {
-      throw new Error(
-        '❌ Google Gemini ne fonctionne pas depuis ta localisation actuelle.\n\n' +
-        'SOLUTION : Déploie le projet sur Vercel.\n' +
-        'Les serveurs Vercel (US/EU) supportent Gemini parfaitement.\n' +
-        '→ https://vercel.com'
-      )
-    }
-
-    // Erreur de clé API
-    if (msg.includes('API_KEY_INVALID') || msg.includes('403')) {
-      throw new Error(
-        '❌ Clé API invalide.\n\n' +
-        'Vérifie ta clé Gemini dans GEMINI_API_KEY.'
-      )
-    }
-
-    throw new Error(msg)
+  const groqKey = process.env.GROQ_API_KEY
+  if (!groqKey) {
+    throw new Error('❌ Aucune clé AI configurée. Ajoute GROQ_API_KEY dans .env')
   }
+
+  const client = getGroqClient()
+  const groqMessages: GroqChatMessage[] = [
+    ...(options?.system ? [{ role: 'system' as const, content: options.system }] : []),
+    ...toGroqMessages(userMessages),
+  ]
+
+  let lastError: unknown = null
+
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const response = await client.chat.completions.create({
+        model: GROQ_MODEL_NAME,
+        messages: groqMessages,
+        temperature: options?.temperature ?? 0.7,
+      })
+
+      const content = response.choices?.[0]?.message?.content ?? ''
+      if (!content || content.trim().length === 0) {
+        throw new Error('❌ Le modèle a retourné une réponse vide.')
+      }
+      return content
+    } catch (error) {
+      lastError = error
+      const msg = error instanceof Error ? error.message : String(error)
+      const status = (error as { status?: number })?.status
+
+      // Erreurs transitoires : on retente avec un délai croissant
+      const isRetryable = status === 429 || status === 503 || msg.includes('429') || msg.includes('503')
+      if (isRetryable && attempt < MAX_RETRIES) {
+        await sleep(RETRY_DELAY_MS * attempt)
+        continue
+      }
+
+      // Erreur de clé invalide
+      if (status === 401 || msg.includes('401') || msg.includes('invalid_api_key')) {
+        throw new Error(
+          '❌ Clé API Groq invalide.\n\n' +
+          'Vérifie ta clé sur https://console.groq.com/keys et mets-la à jour dans GROQ_API_KEY.'
+        )
+      }
+
+      // Quota / limite atteinte après tous les essais
+      if (isRetryable) {
+        throw new Error(
+          '❌ Service temporairement surchargé ou quota atteint après plusieurs tentatives.\n\n' +
+          'Réessaie dans quelques instants. Si ça persiste, vérifie tes limites sur ' +
+          'https://console.groq.com/settings/limits'
+        )
+      }
+
+      throw new Error(msg)
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(String(lastError))
 }
 
 /**
@@ -160,6 +175,6 @@ export async function generateJSON<T = unknown>(
  * Retourne le nom du modèle actif (pour debug).
  */
 export function getCurrentModel(): string {
-  if (process.env.GEMINI_API_KEY) return GEMINI_MODEL_NAME
+  if (process.env.GROQ_API_KEY) return GROQ_MODEL_NAME
   return 'none'
 }
